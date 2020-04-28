@@ -60,6 +60,9 @@ struct Semaphore {
     list: [Option<Waker>; 3],
 }
 
+unsafe impl<T: Send> Send for Inner<T> {}
+unsafe impl<T: Send> Sync for Inner<T> {}
+
 impl<T> TriLock<T> {
     pub fn new(t: T) -> (TriLock<T>, TriLock<T>, TriLock<T>) {
         let inner = Arc::new(Inner {
@@ -100,8 +103,21 @@ impl<T> TriLock<T> {
     }
 }
 
-unsafe impl<T: Send> Send for Inner<T> {}
-unsafe impl<T: Send> Sync for Inner<T> {}
+impl<T> Drop for TriLock<T> {
+    fn drop(&mut self) {
+        let mut state = self.inner.state.lock().unwrap();
+
+        // wake again
+        if state.list[self.mark].take().is_none() && state.idle {
+            for e in &mut state.list {
+                if let Some(waker) = e.take() {
+                    waker.wake();
+                    break
+                }
+            }
+        }
+    }
+}
 
 impl<T> Deref for Guard<'_, T> {
     type Target = T;
@@ -125,9 +141,9 @@ impl<T> Drop for Guard<'_, T> {
 
         state.idle = true;
 
-        for e in &state.list {
-            if let Some(waker) = e {
-                waker.wake_by_ref();
+        for e in &mut state.list {
+            if let Some(waker) = e.take() {
+                waker.wake();
                 break
             }
         }
