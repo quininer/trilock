@@ -43,7 +43,7 @@ pub struct TriLock<T> {
 }
 
 pub struct Guard<'a, T> {
-    inner: &'a TriLock<T>
+    inner: &'a Inner<T>
 }
 
 pub struct TriLockFut<'a, T> {
@@ -82,17 +82,16 @@ impl<T> TriLock<T> {
         let mut state = self.inner.state.lock().unwrap();
 
         match mem::replace(&mut state.idle, false) {
-            true => Poll::Ready(Guard { inner: self }),
+            true => Poll::Ready(Guard { inner: &*self.inner }),
             false => {
                 let waker = cx.waker().clone();
-
                 state.list[self.mark] = Some(waker);
-
                 Poll::Pending
             }
         }
     }
 
+    #[inline]
     pub fn lock(&self) -> TriLockFut<'_, T> {
         TriLockFut { inner: self }
     }
@@ -104,20 +103,22 @@ unsafe impl<T: Send> Sync for Inner<T> {}
 impl<T> Deref for Guard<'_, T> {
     type Target = T;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
-        self.inner.inner.value.with(|val| unsafe { &*val })
+        self.inner.value.with(|val| unsafe { &*val })
     }
 }
 
 impl<T> DerefMut for Guard<'_, T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner.inner.value.with_mut(|val| unsafe { &mut *val })
+        self.inner.value.with_mut(|val| unsafe { &mut *val })
     }
 }
 
 impl<T> Drop for Guard<'_, T> {
     fn drop(&mut self) {
-        let mut state = self.inner.inner.state.lock().unwrap();
+        let mut state = self.inner.state.lock().unwrap();
 
         state.idle = true;
 
@@ -133,6 +134,7 @@ impl<T> Drop for Guard<'_, T> {
 impl<'a, T> Future for TriLockFut<'a, T> {
     type Output = Guard<'a, T>;
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.get_mut().inner.poll_lock(cx)
     }
