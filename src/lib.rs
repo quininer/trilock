@@ -47,7 +47,7 @@ pub struct Guard<'a, T> {
 }
 
 pub struct TriLockFut<'a, T> {
-    inner: &'a TriLock<T>
+    inner: Option<&'a TriLock<T>>
 }
 
 struct Inner<T> {
@@ -81,7 +81,7 @@ impl<T> TriLock<T> {
         )
     }
 
-    pub fn poll_lock<'a>(&'a self, cx: &mut Context<'_>) -> Poll<Guard<'a, T>> {
+    fn poll_inner<'a>(&'a self, cx: &mut Context<'_>) -> Poll<Guard<'a, T>> {
         let mut state = self.inner.state.lock().unwrap();
 
         match mem::replace(&mut state.idle, false) {
@@ -98,8 +98,13 @@ impl<T> TriLock<T> {
     }
 
     #[inline]
-    pub fn lock(&self) -> TriLockFut<'_, T> {
-        TriLockFut { inner: self }
+    pub fn poll_lock<'a>(&'a mut self, cx: &mut Context<'_>) -> Poll<Guard<'a, T>> {
+        self.poll_inner(cx)
+    }
+
+    #[inline]
+    pub fn lock(&mut self) -> TriLockFut<'_, T> {
+        TriLockFut { inner: Some(self) }
     }
 }
 
@@ -155,6 +160,19 @@ impl<'a, T> Future for TriLockFut<'a, T> {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.get_mut().inner.poll_lock(cx)
+        let this = self.get_mut();
+
+        let lock = match this.inner.take() {
+            Some(lock) => lock,
+            None => return Poll::Pending
+        };
+
+        match lock.poll_inner(cx) {
+            Poll::Ready(guard) => Poll::Ready(guard),
+            Poll::Pending => {
+                this.inner = Some(lock);
+                Poll::Pending
+            }
+        }
     }
 }

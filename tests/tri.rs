@@ -8,7 +8,7 @@ use trilock::TriLock;
 
 
 fn test_trilock() {
-    let (one, two, three) = TriLock::new(0u32);
+    let (mut one, mut two, mut three) = TriLock::new(0u32);
 
     let j = thread::spawn(move || futures_executor::block_on(async {
         let mut lock = one.lock().await;
