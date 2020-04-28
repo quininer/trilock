@@ -82,7 +82,10 @@ impl<T> TriLock<T> {
         let mut state = self.inner.state.lock().unwrap();
 
         match mem::replace(&mut state.idle, false) {
-            true => Poll::Ready(Guard { inner: &*self.inner }),
+            true => {
+                state.list[self.mark].take();
+                Poll::Ready(Guard { inner: &*self.inner })
+            },
             false => {
                 let waker = cx.waker().clone();
                 state.list[self.mark] = Some(waker);
